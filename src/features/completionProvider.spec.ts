@@ -1,4 +1,4 @@
-import { window, Position } from 'vscode';
+import { window, Position, MarkdownString } from 'vscode';
 
 import { provideCompletionItems } from './completionProvider';
 import {
@@ -8,7 +8,9 @@ import {
   openTextDocument,
   closeEditorsAndCleanWorkspace,
   updateMemoConfigProperty,
+  createSymlink,
 } from '../test/testUtils';
+import { imageExts } from '../utils';
 
 describe('provideCompletionItems()', () => {
   beforeEach(closeEditorsAndCleanWorkspace);
@@ -78,14 +80,15 @@ describe('provideCompletionItems()', () => {
     ]);
   });
 
-  it('should provide sorted links', async () => {
+  it('should provide links to images and notes on embedding', async () => {
     const name0 = `a-${rndName()}`;
     const name1 = `b-${rndName()}`;
+    const name2 = `c-${rndName()}`;
 
-    await createFile(`/folder1/subfolder1/${name1}.md`);
-    await createFile(`/folder1/${name1}.md`);
-    await createFile(`${name1}.md`);
     await createFile(`${name0}.md`);
+    await createFile(`${name1}.png`);
+    await createFile(`${name2}.png`);
+    await createFile(`/folder1/${name2}.png`);
 
     await cacheWorkspace();
 
@@ -93,26 +96,26 @@ describe('provideCompletionItems()', () => {
 
     const editor = await window.showTextDocument(doc);
 
-    await editor.edit((edit) => edit.insert(new Position(0, 0), '[['));
+    await editor.edit((edit) => edit.insert(new Position(0, 0), '![['));
 
-    const completionItems = provideCompletionItems(doc, new Position(0, 2));
+    const completionItems = provideCompletionItems(doc, new Position(0, 3));
 
     expect(completionItems).toEqual([
       expect.objectContaining({
-        insertText: `${name0}`,
-        label: `${name0}`,
+        insertText: `${name1}.png`,
+        label: `${name1}.png`,
       }),
       expect.objectContaining({
-        insertText: `${name1}`,
-        label: `${name1}`,
+        insertText: `${name2}.png`,
+        label: `${name2}.png`,
       }),
       expect.objectContaining({
-        insertText: `folder1/${name1}`,
-        label: `folder1/${name1}`,
+        insertText: `folder1/${name2}.png`,
+        label: `folder1/${name2}.png`,
       }),
       expect.objectContaining({
-        insertText: `folder1/subfolder1/${name1}`,
-        label: `folder1/subfolder1/${name1}`,
+        insertText: name0,
+        label: name0,
       }),
     ]);
   });
@@ -213,6 +216,340 @@ describe('provideCompletionItems()', () => {
         label: 'folder1/long-dangling-ref',
       }),
     ]);
+  });
+
+  it('should sanitize and insert note title in link after pipeline', async () => {
+    const name0 = `a-${rndName()}`;
+    const name1 = `b-${rndName()}`;
+
+    await createFile(
+      `${name0}.md`,
+      `# Test _title_
+      text
+      text
+      text`,
+    );
+    await createFile(`${name1}.md`);
+
+    const doc = await openTextDocument(`${name1}.md`);
+
+    const editor = await window.showTextDocument(doc);
+
+    await editor.edit((edit) => edit.insert(new Position(0, 0), '[['));
+
+    const completionItems = provideCompletionItems(doc, new Position(0, 2));
+
+    expect(completionItems).toEqual([
+      expect.objectContaining({
+        insertText: `${name0}|Test title`,
+        label: name0,
+      }),
+      expect.objectContaining({
+        insertText: name1,
+        label: name1,
+      }),
+    ]);
+  });
+
+  it('should not insert note title in link after pipeline when title is the same as note ref', async () => {
+    const name0 = `a-${rndName()}`;
+    const name1 = `b-${rndName()}`;
+
+    await createFile(
+      `${name0}.md`,
+      `# ${name0} 
+      text
+      text
+      text`,
+    );
+    await createFile(`${name1}.md`);
+
+    const doc = await openTextDocument(`${name1}.md`);
+
+    const editor = await window.showTextDocument(doc);
+
+    await editor.edit((edit) => edit.insert(new Position(0, 0), '[['));
+
+    const completionItems = provideCompletionItems(doc, new Position(0, 2));
+
+    expect(completionItems).toEqual([
+      expect.objectContaining({
+        insertText: name0,
+        label: name0,
+      }),
+      expect.objectContaining({
+        insertText: name1,
+        label: name1,
+      }),
+    ]);
+  });
+
+  it('should provide notes previews', async () => {
+    const name0 = `a-${rndName()}`;
+    const name1 = `b-${rndName()}`;
+
+    await createFile(`${name0}.md`, `Test text`);
+    await createFile(`${name1}.md`);
+
+    const doc = await openTextDocument(`${name1}.md`);
+
+    const editor = await window.showTextDocument(doc);
+
+    await editor.edit((edit) => edit.insert(new Position(0, 0), '[['));
+
+    const completionItems = provideCompletionItems(doc, new Position(0, 2));
+
+    expect(completionItems).toEqual([
+      expect.objectContaining({
+        insertText: name0,
+        label: name0,
+        documentation: new MarkdownString('Test text'),
+      }),
+      expect.objectContaining({
+        insertText: name1,
+        label: name1,
+      }),
+    ]);
+  });
+
+  it('should provide image previews', async () => {
+    const name0 = `a-${rndName()}`;
+    const name1 = `b-${rndName()}`;
+
+    const randomImageExtIndex = Math.floor(Math.random() * imageExts.length);
+
+    const ext = imageExts[randomImageExtIndex];
+
+    await createFile(`${name0}.${ext}`);
+    await createFile(`${name1}.md`);
+
+    const doc = await openTextDocument(`${name1}.md`);
+
+    const editor = await window.showTextDocument(doc);
+
+    await editor.edit((edit) => edit.insert(new Position(0, 0), '[['));
+
+    const completionItems = provideCompletionItems(doc, new Position(0, 2));
+
+    expect(completionItems).toEqual([
+      expect.objectContaining({
+        insertText: name1,
+        label: name1,
+      }),
+      expect.objectContaining({
+        insertText: `${name0}.${ext}`,
+        label: `${name0}.${ext}`,
+        documentation: new MarkdownString(`![](${name0}.${ext})`),
+      }),
+    ]);
+  });
+
+  it('should ignore redundant symlinks', async () => {
+    const name0 = `a-${rndName()}`;
+    const name1 = `b-${rndName()}`;
+
+    await createFile(`${name1}.md`);
+    await createFile(`${name0}.md`);
+    await createSymlink(`/folder1/subfolder1/${name1}.md`, `${name1}.md`);
+    await createSymlink(`/folder1/${name1}.md`, `${name1}.md`);
+
+    await cacheWorkspace();
+
+    const doc = await openTextDocument(`${name0}.md`);
+
+    const editor = await window.showTextDocument(doc);
+
+    await editor.edit((edit) => edit.insert(new Position(0, 0), '[['));
+
+    const completionItems = provideCompletionItems(doc, new Position(0, 2));
+
+    expect(completionItems).toEqual([
+      expect.objectContaining({
+        insertText: `${name0}`,
+        label: `${name0}`,
+      }),
+      expect.objectContaining({
+        insertText: `${name1}`,
+        label: `${name1}`,
+      }),
+      expect.objectContaining({
+        insertText: `${name1}`,
+        label: `folder1/${name1}`,
+      }),
+      expect.objectContaining({
+        insertText: `${name1}`,
+        label: `folder1/subfolder1/${name1}`,
+      }),
+    ]);
+  });
+
+  it('should distinguish symlinks and real files', async () => {
+    const name0 = `a-${rndName()}`;
+    const name1 = `b-${rndName()}`;
+
+    await createFile(`${name1}.md`);
+    await createFile(`${name0}.md`);
+    await createFile(`/folder1/subfolder2/${name1}.md`);
+    await createSymlink(`/folder1/subfolder1/${name1}.md`, `${name1}.md`);
+    await createSymlink(`/folder1/${name1}.md`, `${name1}.md`);
+
+    await cacheWorkspace();
+
+    const doc = await openTextDocument(`${name0}.md`);
+
+    const editor = await window.showTextDocument(doc);
+
+    await editor.edit((edit) => edit.insert(new Position(0, 0), '[['));
+
+    const completionItems = provideCompletionItems(doc, new Position(0, 2));
+
+    expect(completionItems).toEqual([
+      expect.objectContaining({
+        insertText: `${name0}`,
+        label: `${name0}`,
+      }),
+      expect.objectContaining({
+        insertText: `${name1}`,
+        label: `${name1}`,
+      }),
+      expect.objectContaining({
+        insertText: `folder1/${name1}`,
+        label: `folder1/${name1}`,
+      }),
+      expect.objectContaining({
+        insertText: `folder1/subfolder1/${name1}`,
+        label: `folder1/subfolder1/${name1}`,
+      }),
+      expect.objectContaining({
+        insertText: `folder1/subfolder2/${name1}`,
+        label: `folder1/subfolder2/${name1}`,
+      }),
+    ]);
+  });
+
+  it('should keep aliases', async () => {
+    const name0 = `a-${rndName()}`;
+    const name1 = `b-${rndName()}`;
+    const name2 = `c-${rndName()}`; // alias
+
+    await createFile(`${name1}.md`);
+    await createFile(`${name0}.md`);
+    await createSymlink(`/folder1/subfolder2/${name2}.md`, `${name1}.md`);
+    await createSymlink(`/folder1/subfolder1/${name2}.md`, `${name1}.md`);
+    await createSymlink(`/folder1/subfolder1/${name1}.md`, `${name1}.md`);
+    await createSymlink(`/folder1/${name1}.md`, `${name1}.md`);
+
+    await cacheWorkspace();
+
+    const doc = await openTextDocument(`${name0}.md`);
+
+    const editor = await window.showTextDocument(doc);
+
+    await editor.edit((edit) => edit.insert(new Position(0, 0), '[['));
+
+    const completionItems = provideCompletionItems(doc, new Position(0, 2));
+
+    expect(completionItems).toEqual([
+      expect.objectContaining({
+        insertText: `${name0}`,
+        label: `${name0}`,
+      }),
+      expect.objectContaining({
+        insertText: `${name1}`,
+        label: `${name1}`,
+      }),
+      expect.objectContaining({
+        insertText: `${name1}`,
+        label: `folder1/${name1}`,
+      }),
+      expect.objectContaining({
+        insertText: `${name1}`,
+        label: `folder1/subfolder1/${name1}`,
+      }),
+      expect.objectContaining({
+        insertText: `${name2}`,
+        label: `folder1/subfolder1/${name2}`,
+      }),
+      expect.objectContaining({
+        insertText: `${name2}`,
+        label: `folder1/subfolder2/${name2}`,
+      }),
+    ]);
+  });
+
+  describe('with links.completion.removeRedundantSymlinks = true', () => {
+    it('should remove redundant symlinks', async () => {
+      const name0 = `a-${rndName()}`;
+      const name1 = `b-${rndName()}`;
+
+      await updateMemoConfigProperty('links.completion.removeRedundantSymlinks', true);
+
+      await createFile(`${name1}.md`);
+      await createFile(`${name0}.md`);
+      await createSymlink(`/folder1/subfolder1/${name1}.md`, `${name1}.md`);
+      await createSymlink(`/folder1/${name1}.md`, `${name1}.md`);
+
+      await cacheWorkspace();
+
+      const doc = await openTextDocument(`${name0}.md`);
+
+      const editor = await window.showTextDocument(doc);
+
+      await editor.edit((edit) => edit.insert(new Position(0, 0), '[['));
+
+      const completionItems = provideCompletionItems(doc, new Position(0, 2));
+
+      expect(completionItems).toEqual([
+        expect.objectContaining({
+          insertText: `${name0}`,
+          label: `${name0}`,
+        }),
+        expect.objectContaining({
+          insertText: `${name1}`,
+          label: `${name1}`,
+        }),
+      ]);
+    });
+
+    it('should remove redundant aliases', async () => {
+      const name0 = `a-${rndName()}`;
+      const name1 = `b-${rndName()}`;
+      const name2 = `c-${rndName()}`; // alias
+
+      await updateMemoConfigProperty('links.completion.removeRedundantSymlinks', true);
+
+      await createFile(`${name1}.md`);
+      await createFile(`${name0}.md`);
+      await createSymlink(`/folder1/subfolder2/${name2}.md`, `${name1}.md`);
+      await createSymlink(`/folder1/subfolder1/${name2}.md`, `${name1}.md`);
+      await createSymlink(`/folder1/subfolder1/${name1}.md`, `${name1}.md`);
+      await createSymlink(`/folder1/${name1}.md`, `${name1}.md`);
+
+      await cacheWorkspace();
+
+      const doc = await openTextDocument(`${name0}.md`);
+
+      const editor = await window.showTextDocument(doc);
+
+      await editor.edit((edit) => edit.insert(new Position(0, 0), '[['));
+
+      const completionItems = provideCompletionItems(doc, new Position(0, 2));
+
+      expect(completionItems).toEqual([
+        expect.objectContaining({
+          insertText: `${name0}`,
+          label: `${name0}`,
+        }),
+        expect.objectContaining({
+          insertText: `${name1}`,
+          label: `${name1}`,
+        }),
+        expect.objectContaining({
+          insertText: `${name2}`,
+          label: `folder1/subfolder1/${name2}`,
+        }),
+      ]);
+    });
   });
 
   describe('with links.format = long', () => {
